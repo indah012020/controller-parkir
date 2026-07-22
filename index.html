@@ -3,6 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Device Testing & Monitoring Dashboard</title>
     <style>
         body {
@@ -12,7 +13,8 @@
             color: #333;
         }
 
-        h1, h2 {
+        h1,
+        h2 {
             color: #0056b3;
         }
 
@@ -25,13 +27,20 @@
             overflow-x: auto;
         }
 
+        .header-flex {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 10px;
         }
 
-        th, td {
+        th,
+        td {
             border: 1px solid #ddd;
             padding: 8px;
             text-align: left;
@@ -49,6 +58,11 @@
 
         .status-online {
             color: green;
+            font-weight: bold;
+        }
+
+        .status-offline {
+            color: #d9534f;
             font-weight: bold;
         }
 
@@ -88,7 +102,7 @@
     <h1>🧪 Device Testing & Monitoring Dashboard</h1>
 
     <div class="card">
-        <h2>🔌 Device Terhubung (Active Sessions)</h2>
+        <h2>🔌 Device Terhubung (Active & History Sessions)</h2>
         <table>
             <thead>
                 <tr>
@@ -109,7 +123,10 @@
     </div>
 
     <div class="card">
-        <h2>📜 Live Event Logs</h2>
+        <div class="header-flex">
+            <h2>📜 Live Event Logs</h2>
+            <button class="danger" onclick="clearLogs()">Clear Logs</button>
+        </div>
         <table>
             <thead>
                 <tr>
@@ -131,6 +148,14 @@
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
+        let cachedData = { devices: [], logs: [] };
+
+        function formatUptime(seconds) {
+            const hrs = Math.floor(seconds / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return `${hrs}j ${mins}m ${secs}d`;
+        }
 
         function sendCommand(socketId, action, extraData = {}) {
             socket.emit('admin_command', {
@@ -144,41 +169,66 @@
             const folderInput = document.getElementById(`folder_${socketId}`);
             const trackInput = document.getElementById(`track_${socketId}`);
             sendCommand(socketId, 'playAudio', {
-                folder: folderInput.value || '02',
-                track: trackInput.value || '04'
+                folder: folderInput ? folderInput.value : '02',
+                track: trackInput ? trackInput.value : '02'
             });
         }
 
-        socket.on('update_monitoring', (data) => {
+        function clearLogs() {
+            if (confirm("Apakah Anda yakin ingin menghapus semua event logs?")) {
+                socket.emit('clear_logs');
+            }
+        }
+
+        function renderDashboard() {
             const deviceTable = document.getElementById('deviceTable');
-            if (!data.devices || data.devices.length === 0) {
+            if (!cachedData.devices || cachedData.devices.length === 0) {
                 deviceTable.innerHTML = '<tr><td colspan="6" style="text-align: center;">Belum ada device terhubung</td></tr>';
             } else {
-                deviceTable.innerHTML = data.devices.map(dev => `
-                    <tr>
-                        <td><b>${dev.deviceId}</b></td>
-                        <td>${dev.socketId}</td>
-                        <td>${dev.connectedAt}</td>
-                        <td>${dev.uptimeFormatted}</td>
-                        <td><span class="status-online">Online</span></td>
-                        <td>
-                            <button onclick="sendCommand('${dev.socketId}', 'openGate')">Open Gate</button>
-                            <button class="danger" onclick="sendCommand('${dev.socketId}', 'disallowProcess')">Disallow</button>
-                            <button onclick="sendCommand('${dev.socketId}', 'allowProcess')">Allow</button>
-                            <br style="margin: 5px 0;">
-                            <input type="text" id="folder_${dev.socketId}" value="02" title="Folder">
-                            <input type="text" id="track_${dev.socketId}" value="04" title="Track">
-                            <button onclick="triggerAudio('${dev.socketId}')">Play Audio</button>
-                        </td>
-                    </tr>
-                `).join('');
+                deviceTable.innerHTML = cachedData.devices.map(dev => {
+                    const isOnline = dev.isOnline;
+                    const uptimeSeconds = isOnline ? Math.floor((Date.now() - dev.timestamp) / 1000) : 0;
+
+                    // Ambil nilai input yang sedang diketik (jika elemennya sudah ada di DOM)
+                    const existingFolder = document.getElementById(`folder_${dev.socketId}`);
+                    const existingTrack = document.getElementById(`track_${dev.socketId}`);
+                    const folderVal = existingFolder ? existingFolder.value : '02';
+                    const trackVal = existingTrack ? existingTrack.value : '02';
+
+                    return `
+                        <tr>
+                            <td><b>${dev.deviceId}</b></td>
+                            <td>${dev.socketId}</td>
+                            <td>${isOnline ? dev.connectedAt : '-'}</td>
+                            <td class="uptime-cell" data-timestamp="${dev.timestamp}" data-online="${isOnline}">
+                                ${isOnline ? formatUptime(uptimeSeconds) : '-'}
+                            </td>
+                            <td>
+                                ${isOnline
+                            ? '<span class="status-online">Online</span>'
+                            : '<span class="status-offline">Offline</span>'}
+                            </td>
+                            <td>
+                                ${isOnline ? `
+                                    <button onclick="sendCommand('${dev.socketId}', 'openGate')">Open Gate</button>
+                                    <button class="danger" onclick="sendCommand('${dev.socketId}', 'disallowProcess')">Disallow</button>
+                                    <button onclick="sendCommand('${dev.socketId}', 'allowProcess')">Allow</button>
+                                    <br style="margin: 5px 0;">
+                                    <input type="text" id="folder_${dev.socketId}" value="${folderVal}" title="Folder">
+                                    <input type="text" id="track_${dev.socketId}" value="${trackVal}" title="Track">
+                                    <button onclick="triggerAudio('${dev.socketId}')">Play Audio</button>
+                                ` : '<span style="color: gray; font-size: 12px;">Tidak tersedia (Offline)</span>'}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
             }
 
             const logTable = document.getElementById('logTable');
-            if (!data.logs || data.logs.length === 0) {
+            if (!cachedData.logs || cachedData.logs.length === 0) {
                 logTable.innerHTML = '<tr><td colspan="5" style="text-align: center;">Belum ada event tercatat</td></tr>';
             } else {
-                logTable.innerHTML = data.logs.map(log => `
+                logTable.innerHTML = cachedData.logs.map(log => `
                     <tr>
                         <td>${log.time}</td>
                         <td><b>${log.deviceId}</b></td>
@@ -188,7 +238,25 @@
                     </tr>
                 `).join('');
             }
+        }
+
+        socket.on('update_monitoring', (data) => {
+            cachedData = data;
+            renderDashboard();
         });
+
+        // Update tampilan uptime secara lokal setiap 1 detik
+        setInterval(() => {
+            const uptimeCells = document.querySelectorAll('.uptime-cell');
+            uptimeCells.forEach(cell => {
+                const isOnline = cell.getAttribute('data-online') === 'true';
+                if (isOnline) {
+                    const timestamp = parseInt(cell.getAttribute('data-timestamp'));
+                    const uptimeSeconds = Math.floor((Date.now() - timestamp) / 1000);
+                    cell.textContent = formatUptime(uptimeSeconds);
+                }
+            });
+        }, 1000);
     </script>
 </body>
 

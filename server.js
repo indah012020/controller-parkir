@@ -3,16 +3,17 @@ const fs = require('fs');
 const path = require('path');
 const { Server } = require('socket.io');
 
-let activeDevices = new Map();
+const activeDevices = new Map();
 let eventLogs = [];
+const MAX_LOGS = 50;
 
-// 1. HTTP Server menyajikan file index.html
+// 1. HTTP Server menyajikan file index.html eksternal
 const httpServer = http.createServer((req, res) => {
     if (req.url === '/' || req.url === '/index.html') {
         const filePath = path.join(__dirname, 'index.html');
         fs.readFile(filePath, (err, content) => {
             if (err) {
-                res.writeHead(500, { 'Content-Type': 'text/plain' });
+                res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
                 res.end('Gagal memuat file index.html');
                 return;
             }
@@ -20,7 +21,7 @@ const httpServer = http.createServer((req, res) => {
             res.end(content);
         });
     } else {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('Not Found');
     }
 });
@@ -28,13 +29,6 @@ const httpServer = http.createServer((req, res) => {
 const io = new Server(httpServer, {
     cors: { origin: "*" }
 });
-
-function formatUptime(seconds) {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return `${hrs}j ${mins}m ${secs}d`;
-}
 
 function recordLog(socketId, deviceId, eventName, eventData) {
     const logEntry = {
@@ -48,7 +42,7 @@ function recordLog(socketId, deviceId, eventName, eventData) {
     console.log(`${logEntry.time} - [${eventName}] Device: ${logEntry.deviceId} | SocketID: ${socketId}`, eventData || '');
 
     eventLogs.unshift(logEntry);
-    if (eventLogs.length > 50) eventLogs.pop();
+    if (eventLogs.length > MAX_LOGS) eventLogs.pop();
 
     broadcastDashboardData();
 }
@@ -56,12 +50,12 @@ function recordLog(socketId, deviceId, eventName, eventData) {
 function broadcastDashboardData() {
     const devicesArr = [];
     activeDevices.forEach((value, key) => {
-        const uptimeSeconds = Math.floor((Date.now() - value.timestamp) / 1000);
         devicesArr.push({
             socketId: key,
             deviceId: value.deviceId || 'Menunggu ID...',
-            connectedAt: value.connectedAt,
-            uptimeFormatted: formatUptime(uptimeSeconds)
+            connectedAt: value.isOnline ? value.connectedAt : '-',
+            timestamp: value.timestamp,
+            isOnline: value.isOnline
         });
     });
 
@@ -71,23 +65,15 @@ function broadcastDashboardData() {
     });
 }
 
-setInterval(() => {
-    if (activeDevices.size > 0) {
-        broadcastDashboardData();
-    }
-}, 1000);
-
 // 2. Middleware Auth: Hanya validasi token jika request dari Device (ESP)
 io.use((socket, next) => {
     const token = socket.handshake.headers.authorization;
 
-    // Jika tidak ada header authorization (berarti diakses dari browser/web dashboard)
     if (!token) {
         socket.isWebDashboard = true;
         return next();
     }
 
-    // Validasi token khusus Device (ESP)
     if (token !== "1234567890") {
         console.log(new Date().toLocaleString() + " - Authentication error: Invalid token");
         return next(new Error("Authentication error: Invalid token"));
@@ -98,30 +84,37 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
-    // Jika koneksi dari Web Dashboard
-    // Jika koneksi dari Web Dashboard, tangani perintah kontrol ke device
+    const deviceId = socket.handshake.query.id;
+
     if (socket.isWebDashboard) {
         console.log(new Date().toLocaleString() + ' - Web Dashboard terhubung. SocketID:', socket.id);
 
+        // Kirim initial state ke dashboard baru
         socket.emit('update_monitoring', {
             devices: Array.from(activeDevices.entries()).map(([k, v]) => ({
                 socketId: k,
                 deviceId: v.deviceId || 'Menunggu ID...',
-                connectedAt: v.connectedAt,
-                uptimeFormatted: formatUptime(Math.floor((Date.now() - v.timestamp) / 1000))
+                connectedAt: v.isOnline ? v.connectedAt : '-',
+                timestamp: v.timestamp,
+                isOnline: v.isOnline
             })),
             logs: eventLogs
         });
 
-        // Handler aksi dari dashboard web untuk target device tertentu
         socket.on('admin_command', ({ targetSocketId, action, ...extraData }) => {
             const targetSocket = io.sockets.sockets.get(targetSocketId);
             if (!targetSocket) return;
 
             const commandPayload = { action, ...extraData };
-
             targetSocket.emit('command', commandPayload);
             recordLog(targetSocketId, activeDevices.get(targetSocketId)?.deviceId || 'UNKNOWN', 'ADMIN_CMD', commandPayload);
+        });
+
+        // Event handler untuk clear logs dari dashboard
+        socket.on('clear_logs', () => {
+            eventLogs = [];
+            console.log(new Date().toLocaleString() + ' - Event logs dibersihkan oleh admin.');
+            broadcastDashboardData();
         });
 
         return;
@@ -129,18 +122,19 @@ io.on('connection', (socket) => {
 
     // Logika Khusus Device (ESP)
     const connectTime = new Date();
-
     activeDevices.set(socket.id, {
         timestamp: Date.now(),
         connectedAt: connectTime.toLocaleString(),
-        deviceId: null
+        deviceId: deviceId,
+        isOnline: true
     });
+    checkAndUpdateDeviceId({ id: deviceId });
 
-    recordLog(socket.id, 'UNKNOWN', 'CONNECT', { message: 'Device terhubung' });
+    recordLog(socket.id, deviceId, 'CONNECT', { message: 'Device terhubung' });
 
-    const testingInterval = setInterval(function () {
+    const testingInterval = setInterval(() => {
         socket.emit('command', { "action": "playAudio", "folder": "02", "track": "02" });
-        setTimeout(function () {
+        setTimeout(() => {
             socket.emit('command', { "action": "openGate" });
         }, 10000);
     }, 60000 * 60);
@@ -149,15 +143,36 @@ io.on('connection', (socket) => {
         clearInterval(testingInterval);
         const devInfo = activeDevices.get(socket.id);
         const devId = devInfo ? devInfo.deviceId : 'UNKNOWN';
-        activeDevices.delete(socket.id);
+
+        if (devInfo && devInfo.deviceId) {
+            // Jika device sudah memiliki ID, ubah status menjadi offline
+            devInfo.isOnline = false;
+        } else {
+            // Jika belum punya ID (masih "Menunggu ID..."), hapus dari Map
+            activeDevices.delete(socket.id);
+        }
+
         recordLog(socket.id, devId, 'DISCONNECT', { message: 'Device terputus' });
+        broadcastDashboardData();
     });
 
     function checkAndUpdateDeviceId(data) {
         if (data && data.id) {
+            const newDeviceId = data.id;
+
+            // Cek apakah ada device lain (baik online/offline) yang menggunakan deviceId yang sama
+            for (const [existingSocketId, devData] of activeDevices.entries()) {
+                if (existingSocketId !== socket.id && devData.deviceId === newDeviceId) {
+                    // Hapus data lama yang memiliki deviceId kembar/sama
+                    activeDevices.delete(existingSocketId);
+                }
+            }
+
+            // Update deviceId untuk koneksi socket yang sedang aktif ini
             const dev = activeDevices.get(socket.id);
-            if (dev && !dev.deviceId) {
-                dev.deviceId = data.id;
+            if (dev) {
+                dev.deviceId = newDeviceId;
+                dev.isOnline = true;
                 broadcastDashboardData();
             }
         }
@@ -183,18 +198,18 @@ io.on('connection', (socket) => {
         recordLog(socket.id, devId, 'start', data);
 
         if (data.type === "button") {
-            setTimeout(function () {
+            setTimeout(() => {
                 socket.emit('command', { "action": "openGate" });
             }, 2000);
         } else {
             const registeredCardIds = ["706547715", "2071513441"];
 
-            if (registeredCardIds.findIndex(e => e === data.card_id) !== -1) {
-                setTimeout(function () {
+            if (registeredCardIds.includes(data.card_id)) {
+                setTimeout(() => {
                     socket.emit('command', { "action": "openGate" });
                 }, 2000);
             } else {
-                setTimeout(function () {
+                setTimeout(() => {
                     socket.emit('command', { "action": "playAudio", "folder": "02", "track": "04" });
                 }, 2000);
             }
