@@ -141,8 +141,9 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         clearInterval(testingInterval);
+
         const devInfo = activeDevices.get(socket.id);
-        const devId = devInfo ? devInfo.deviceId : 'UNKNOWN';
+        const devId = devInfo ? devInfo.deviceId : deviceId;
 
         if (devInfo && devInfo.deviceId) {
             // Jika device sudah memiliki ID, ubah status menjadi offline
