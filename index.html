@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Device Testing & Monitoring Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f4f4f9;
+            color: #333;
+        }
+
+        h1,
+        h2 {
+            color: #0056b3;
+        }
+
+        .card {
+            background: white;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            font-size: 14px;
+        }
+
+        th {
+            background-color: #0056b3;
+            color: white;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        .status-online {
+            color: green;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🧪 Device Testing & Monitoring Dashboard</h1>
+
+    <div class="card">
+        <h2>🔌 Device Terhubung (Active Sessions)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Device ID</th>
+                    <th>Socket ID</th>
+                    <th>Waktu Terhubung</th>
+                    <th>Uptime</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="deviceTable">
+                <tr>
+                    <td colspan="5" style="text-align: center;">Belum ada device terhubung</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>📜 Live Event Logs</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Waktu</th>
+                    <th>Device ID</th>
+                    <th>Socket ID</th>
+                    <th>Event / Aksi</th>
+                    <th>Detail Data</th>
+                </tr>
+            </thead>
+            <tbody id="logTable">
+                <tr>
+                    <td colspan="5" style="text-align: center;">Belum ada event tercatat</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        socket.on('update_monitoring', (data) => {
+            const deviceTable = document.getElementById('deviceTable');
+            if (!data.devices || data.devices.length === 0) {
+                deviceTable.innerHTML = '<tr><td colspan="5" style="text-align: center;">Belum ada device terhubung</td></tr>';
+            } else {
+                deviceTable.innerHTML = data.devices.map(dev => `
+                    <tr>
+                        <td><b>${dev.deviceId}</b></td>
+                        <td>${dev.socketId}</td>
+                        <td>${dev.connectedAt}</td>
+                        <td>${dev.uptimeFormatted}</td>
+                        <td><span class="status-online">Online</span></td>
+                    </tr>
+                `).join('');
+            }
+
+            const logTable = document.getElementById('logTable');
+            if (!data.logs || data.logs.length === 0) {
+                logTable.innerHTML = '<tr><td colspan="5" style="text-align: center;">Belum ada event tercatat</td></tr>';
+            } else {
+                logTable.innerHTML = data.logs.map(log => `
+                    <tr>
+                        <td>${log.time}</td>
+                        <td><b>${log.deviceId}</b></td>
+                        <td>${log.socketId}</td>
+                        <td><b>${log.event}</b></td>
+                        <td><pre style="margin:0; font-family:inherit;">${JSON.stringify(log.data, null, 2)}</pre></td>
+                    </tr>
+                `).join('');
+            }
+        });
+    </script>
+</body>
+
+</html>
