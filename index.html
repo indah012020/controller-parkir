@@ -12,8 +12,7 @@
             color: #333;
         }
 
-        h1,
-        h2 {
+        h1, h2 {
             color: #0056b3;
         }
 
@@ -23,6 +22,7 @@
             margin-bottom: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            overflow-x: auto;
         }
 
         table {
@@ -31,8 +31,7 @@
             margin-top: 10px;
         }
 
-        th,
-        td {
+        th, td {
             border: 1px solid #ddd;
             padding: 8px;
             text-align: left;
@@ -52,6 +51,36 @@
             color: green;
             font-weight: bold;
         }
+
+        button {
+            background-color: #0056b3;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            margin: 2px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        button:hover {
+            background-color: #004494;
+        }
+
+        button.danger {
+            background-color: #d9534f;
+        }
+
+        button.danger:hover {
+            background-color: #c9302c;
+        }
+
+        input[type="text"] {
+            width: 35px;
+            padding: 3px;
+            text-align: center;
+            margin-right: 3px;
+        }
     </style>
 </head>
 
@@ -68,11 +97,12 @@
                     <th>Waktu Terhubung</th>
                     <th>Uptime</th>
                     <th>Status</th>
+                    <th>Aksi Kontrol</th>
                 </tr>
             </thead>
             <tbody id="deviceTable">
                 <tr>
-                    <td colspan="5" style="text-align: center;">Belum ada device terhubung</td>
+                    <td colspan="6" style="text-align: center;">Belum ada device terhubung</td>
                 </tr>
             </tbody>
         </table>
@@ -102,10 +132,27 @@
     <script>
         const socket = io();
 
+        function sendCommand(socketId, action, extraData = {}) {
+            socket.emit('admin_command', {
+                targetSocketId: socketId,
+                action: action,
+                ...extraData
+            });
+        }
+
+        function triggerAudio(socketId) {
+            const folderInput = document.getElementById(`folder_${socketId}`);
+            const trackInput = document.getElementById(`track_${socketId}`);
+            sendCommand(socketId, 'playAudio', {
+                folder: folderInput.value || '02',
+                track: trackInput.value || '04'
+            });
+        }
+
         socket.on('update_monitoring', (data) => {
             const deviceTable = document.getElementById('deviceTable');
             if (!data.devices || data.devices.length === 0) {
-                deviceTable.innerHTML = '<tr><td colspan="5" style="text-align: center;">Belum ada device terhubung</td></tr>';
+                deviceTable.innerHTML = '<tr><td colspan="6" style="text-align: center;">Belum ada device terhubung</td></tr>';
             } else {
                 deviceTable.innerHTML = data.devices.map(dev => `
                     <tr>
@@ -114,6 +161,15 @@
                         <td>${dev.connectedAt}</td>
                         <td>${dev.uptimeFormatted}</td>
                         <td><span class="status-online">Online</span></td>
+                        <td>
+                            <button onclick="sendCommand('${dev.socketId}', 'openGate')">Open Gate</button>
+                            <button class="danger" onclick="sendCommand('${dev.socketId}', 'disallowProcess')">Disallow</button>
+                            <button onclick="sendCommand('${dev.socketId}', 'allowProcess')">Allow</button>
+                            <br style="margin: 5px 0;">
+                            <input type="text" id="folder_${dev.socketId}" value="02" title="Folder">
+                            <input type="text" id="track_${dev.socketId}" value="04" title="Track">
+                            <button onclick="triggerAudio('${dev.socketId}')">Play Audio</button>
+                        </td>
                     </tr>
                 `).join('');
             }

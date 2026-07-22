@@ -46,7 +46,7 @@ function recordLog(socketId, deviceId, eventName, eventData) {
     };
 
     console.log(`${logEntry.time} - [${eventName}] Device: ${logEntry.deviceId} | SocketID: ${socketId}`, eventData || '');
-    
+
     eventLogs.unshift(logEntry);
     if (eventLogs.length > 50) eventLogs.pop();
 
@@ -80,7 +80,7 @@ setInterval(() => {
 // 2. Middleware Auth: Hanya validasi token jika request dari Device (ESP)
 io.use((socket, next) => {
     const token = socket.handshake.headers.authorization;
-    
+
     // Jika tidak ada header authorization (berarti diakses dari browser/web dashboard)
     if (!token) {
         socket.isWebDashboard = true;
@@ -99,8 +99,10 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
     // Jika koneksi dari Web Dashboard
+    // Jika koneksi dari Web Dashboard, tangani perintah kontrol ke device
     if (socket.isWebDashboard) {
         console.log(new Date().toLocaleString() + ' - Web Dashboard terhubung. SocketID:', socket.id);
+
         socket.emit('update_monitoring', {
             devices: Array.from(activeDevices.entries()).map(([k, v]) => ({
                 socketId: k,
@@ -110,28 +112,38 @@ io.on('connection', (socket) => {
             })),
             logs: eventLogs
         });
+
+        // Handler aksi dari dashboard web untuk target device tertentu
+        socket.on('admin_command', ({ targetSocketId, action, ...extraData }) => {
+            const targetSocket = io.sockets.sockets.get(targetSocketId);
+            if (!targetSocket) return;
+
+            const commandPayload = { action, ...extraData };
+
+            targetSocket.emit('command', commandPayload);
+            recordLog(targetSocketId, activeDevices.get(targetSocketId)?.deviceId || 'UNKNOWN', 'ADMIN_CMD', commandPayload);
+        });
+
         return;
     }
 
     // Logika Khusus Device (ESP)
     const connectTime = new Date();
-    
+
     activeDevices.set(socket.id, {
         timestamp: Date.now(),
         connectedAt: connectTime.toLocaleString(),
-        deviceId: null 
+        deviceId: null
     });
 
     recordLog(socket.id, 'UNKNOWN', 'CONNECT', { message: 'Device terhubung' });
 
     const testingInterval = setInterval(function () {
         socket.emit('command', { "action": "playAudio", "folder": "02", "track": "02" });
-        socket.emit('command', { "action": 'allowProcess' });
         setTimeout(function () {
             socket.emit('command', { "action": "openGate" });
-            socket.emit('command', { "action": 'disallowProcess' });
-        }, 5000);
-    }, 60000);
+        }, 10000);
+    }, 60000 * 60);
 
     socket.on('disconnect', () => {
         clearInterval(testingInterval);
@@ -204,6 +216,6 @@ io.on('connection', (socket) => {
     });
 });
 
-httpServer.listen(8080, () => {
-    console.log(new Date().toLocaleString() + ' - Server Testing & Monitoring berjalan di port 8080');
+httpServer.listen(9010, () => {
+    console.log(new Date().toLocaleString() + ' - Server Testing & Monitoring berjalan di port 9010');
 });
